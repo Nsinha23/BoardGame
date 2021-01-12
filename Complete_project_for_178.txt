@@ -1,0 +1,1039 @@
+#include <stdio.h>
+#include "io.h"
+#include "alt_types.h"
+#include <stdlib.h>
+#include "system.h"
+#include "altera_avalon_pio_regs.h"
+#include "altera_avalon_timer.h"   //included files for timer
+#include "altera_avalon_timer_regs.h" //included files for timer
+#include "sys/alt_irq.h" //for interrupts
+#include "priv/alt_legacy_irq.h"
+#include "altera_avalon_jtag_uart_regs.h" // included for jtag
+#include "altera_up_avalon_character_lcd.h" // for lcd display
+#include <altera_up_sd_card_avalon_interface.h> // for sd card
+#include "unistd.h" // usleep timer
+
+// declaration of functions-----------------------------------------------------------------------
+void lcd_display();
+void second_display();
+void no_display_hex();
+static void pio_keys();
+void handle_interrupts();
+void random_green_pattern();
+void timer_once(int period);
+void start_timer();
+void four_letter_words();
+void First_word();
+void winner_game();
+void loser_game();
+void second_word();
+void sd_card(char byte_to_write[]);
+
+// Initialization---------------------------------------------------------------------------------
+volatile char edge_capture; // change to the character
+volatile int winner[7] = { 0b1000011, 0b1100001, 0b1111001, 0b1001000,
+		0b1001000, 0b0000100, 0b0001111 };
+volatile int loser[5] =
+		{ 0b1000111, 0b1000000, 0b0010010, 0b0000100, 0b0001111 };
+volatile int nodisp[1] = { 0b1111111 };
+
+//First letter coordinate-------------------------------------------------------------------
+volatile char correctX[2][5] = { { 'A', 'P', 'P', 'L', 'E' }, { 'S', 'H', 'A',
+		'R', 'E' } }; //apple -x
+
+volatile char letter[2][16] = { { '0', '0', '0', '0', 'L', '0', '0', '0', '0',
+		'0', 'P', '0', '0', '0', '0', '0' }, { '0', 'E', '0', '0', '0', '0',
+		'P', '0', '0', '0', '0', 'A', '0', '0', '0', '0' } };
+
+//Global Variables for sd card-----------------------------------------------------------------------------
+short int file_checker;
+char *filename = "NSgame.txt";
+volatile int doread = 0;
+volatile int dowrite = 0;
+volatile int a = 0;
+short int checking;
+unsigned char Bytes_w[512];
+
+//Global Variables for cursor--------------------------------------------------------------------------------
+volatile int s = 1; // moving cursor
+volatile int d = 0; // move down
+volatile int xpos = 0; // x position
+volatile int ypos = 0; // y position
+volatile int v = 0;     // v global variable
+volatile int enter = 0;
+volatile int selectGame =0;
+volatile int lset = 0; // next game increment
+
+//GAME 2 VARIABLE DECLARED---------------------------------------------------------------------------
+
+volatile int hex_state = 0;
+volatile int START_GAME = 0;
+volatile int STOP_GAME = 1;
+volatile int sw0 = 0;
+volatile int sw1 = 0;
+volatile int sw2 = 0;
+volatile int sw3 = 0;
+volatile int sw4 = 0;
+volatile int sw5 = 0;
+volatile int sw6 = 0;
+volatile int sw7 = 0;
+volatile int sw8 = 0;
+volatile int sw9 = 0;
+volatile int sw10 = 0;
+volatile int sw11 = 0;
+volatile int sw12 = 0;
+volatile int sw13 = 0;
+volatile int sw14 = 0;
+volatile int sw15 = 0;
+volatile int sw16 = 0;
+volatile int sw17 = 0;
+
+
+void STOP_isr(void);
+void LCD();
+void BLANK_HEX();
+void GET_READY();
+void STOP_THE_GAME();
+
+volatile int STOP[4] = {0b0010010,0b0000111,0b1000000,0b0001100}; //STOP
+
+volatile int HEX0[3] = {0b1111110,0b0111111,0b1110111};
+volatile int HEX1[3] = {0b1111110,0b0111111,0b1110111};
+volatile int HEX2[3] = {0b1111110,0b0111111,0b1110111};
+
+volatile int PA_DOIT[6] = {0b0001100,0b0001000,0b0100001,0b0100011,0b1111011,0b0000111};
+volatile int PB_DOIT[6] = {0b0001100,0b0000000,0b1000000,0b0100011,0b1111001,0b0000111};
+volatile int OOPS[4] = {0b1000000,0b1000000,0b0001100,0b0010010};
+
+
+
+
+
+
+
+//defining keys-----------------------------------------------------------------------------------
+static void pio_keys() {
+	void*edge_capture_ptr = (void*) &edge_capture;
+	printf("The keys are set \n");
+	IOWR_ALTERA_AVALON_JTAG_UART_CONTROL(JTAG_UART_0_BASE, 0x01);
+	alt_irq_register(JTAG_UART_0_IRQ, edge_capture_ptr, handle_interrupts);
+	printf("2\n");
+	return;
+}
+
+//defining handler--------------------------------------------------------------------------------
+void handle_interrupts(void*context) {
+	volatile char*edge_capture_ptr = (volatile char*) context;
+	*edge_capture_ptr = IORD_ALTERA_AVALON_JTAG_UART_DATA(JTAG_UART_0_BASE);
+
+	if (*edge_capture_ptr == 'c') {
+		printf("from keyboard c\n");
+		lcd_display();
+	}
+	if (*edge_capture_ptr == 'f') {
+		printf("from keyboard f\n");
+		s = 0;
+		d = 1;
+		second_display();
+	}
+	if (*edge_capture_ptr == 'a') {     // going left
+		printf("from keyboard a\n");
+		if (xpos != 0) {
+			xpos = xpos - 1;
+		} else {
+			xpos = 15;
+		}
+	}
+	if (*edge_capture_ptr == 'w') {     //going up
+		printf("from keyboard w\n");
+		if (ypos != 0) {
+			ypos = 0;
+		} else {
+			ypos = 1;
+		}
+	}
+	if (*edge_capture_ptr == 's') {     // going down
+		printf("from keyboard s\n");
+		if (ypos != 0) {
+			ypos = 0;
+		} else {
+			ypos = 1;
+		}
+	}
+	if (*edge_capture_ptr == 'd') { // going right
+		printf("from keyboard d\n");
+		if (xpos != 15) {
+			xpos = xpos + 1;
+		} else {
+			xpos = 0;
+		}
+	}
+	if (*edge_capture_ptr == 'e') {
+		enter = 1; //destroyer the word
+
+	}
+    if (*edge_capture_ptr == 'r') { //if edge cap for t is on 1000
+        printf(" You pressed R from the keyboard\n");
+        GET_READY();
+        BLANK_HEX();
+
+    }
+    if (*edge_capture_ptr == 't') { // if edge cap for s is on 1000
+        printf(" You pressed T from the keyboard\n");
+        if (selectGame == 0){
+        	selectGame =1;
+        }
+        else{
+        	selectGame = 0;
+        }
+        LCD();
+        BLANK_HEX();
+    }
+    if (*edge_capture_ptr == 'p') {
+    	  printf(" You pressed P from the keyboard\n");
+        STOP_isr();
+        STOP_THE_GAME();
+    }
+	IOWR_ALTERA_AVALON_JTAG_UART_DATA(JTAG_UART_0_BASE, 0);
+	return;
+}
+
+//defining functions -----------------------------------------------------------------------------
+void lcd_display() {
+	no_display_hex();
+	//printf("I am back from no display function\n");
+	alt_up_character_lcd_dev*char_lcd_dev;
+	char_lcd_dev = alt_up_character_lcd_open_dev("/dev/character_lcd_0");
+	if (char_lcd_dev == NULL) {
+		printf("Error\n");
+	} else {
+		printf("opened_character_lcd\n");
+	}
+	alt_up_character_lcd_init(char_lcd_dev);
+	alt_up_character_lcd_string(char_lcd_dev, "Scramble Word");
+	char second_row[] = "Ready";
+	alt_up_character_lcd_set_cursor_pos(char_lcd_dev, 0, 1);
+	alt_up_character_lcd_string(char_lcd_dev, second_row);
+
+}
+//TURN OFF HEX--------------------------------------------------------------------------------------------
+void no_display_hex() {
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, nodisp[0]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, nodisp[0]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, nodisp[0]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, nodisp[0]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_3_BASE, nodisp[0]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_2_BASE, nodisp[0]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_1_BASE, nodisp[0]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_0_BASE, nodisp[0]);
+	return;
+}
+//-----------------------------------------------------------------------------------------------
+void second_display() {
+	random_green_pattern();
+
+	printf("I am back random_green_pattern\n");
+	alt_up_character_lcd_dev*char_lcd_dev;
+
+	char_lcd_dev = alt_up_character_lcd_open_dev("/dev/character_lcd_0");
+	if (char_lcd_dev == NULL) {
+		printf("Error\n");
+	} else {
+		printf("opened_character_lcd\n");
+	}
+	alt_up_character_lcd_init(char_lcd_dev);
+
+	alt_up_character_lcd_string(char_lcd_dev, " LET'S ");
+	char second_row[] = "BEGIN PLAYING";
+	alt_up_character_lcd_set_cursor_pos(char_lcd_dev, 0, 1);
+	alt_up_character_lcd_string(char_lcd_dev, second_row);
+	usleep(3000000); //delay for 3 sec
+	four_letter_words();
+	printf("returned from four letter word to second");
+}
+//-----------------------------------------------------------------------------------------
+void random_green_pattern() {
+	int i;
+	int j = 18;
+	int count = 0;
+	int co;
+
+	for (i = 1; i < j; i++) {
+		timer_once(5000000); //set period at 50ms
+		co = pow(2, count); // LED Red running
+		IOWR_ALTERA_AVALON_PIO_DATA(LEDG_BASE, co);
+		count = count + 1;
+		if (count == 18) {
+			IOWR_ALTERA_AVALON_PIO_DATA(LEDG_BASE, 0);
+		}
+		start_timer();
+//printf("KEY2 is pressed and the count is  %d\n", count);
+	}
+	return;
+}
+//------------------------------------------------------------------------------------------------------
+void four_letter_words() {
+	alt_up_character_lcd_dev*char_lcd_dev;
+	char_lcd_dev = alt_up_character_lcd_open_dev("/dev/character_lcd_0");
+	if (char_lcd_dev == NULL) {
+		printf("Error\n");
+	} else {
+//printf("opened_character_lcd\n");
+	}
+
+	alt_up_character_lcd_init(char_lcd_dev);
+	alt_up_character_lcd_string(char_lcd_dev, "Make five  ");
+	char second_row[] = " letter word ";
+	alt_up_character_lcd_set_cursor_pos(char_lcd_dev, 0, 1);
+	alt_up_character_lcd_string(char_lcd_dev, second_row);
+	usleep(3000000); //delay for 3 sec
+	First_word();
+	printf("First letter is printed on screen\n");
+
+	return;
+}
+//First_word- APPLE---------------------------------------------------------------------------------------------
+void First_word() {
+	alt_up_character_lcd_dev*char_lcd_dev;
+	char_lcd_dev = alt_up_character_lcd_open_dev("/dev/character_lcd_0");
+	if (char_lcd_dev == NULL) {
+		printf("Error\n");
+	} else {
+//printf("opened_character_lcd\n");
+	}
+	alt_up_character_lcd_init(char_lcd_dev);
+	usleep(2000000);
+	alt_up_character_lcd_string(char_lcd_dev, "    L     P");
+	char second_row[] = " E    P    A   ";
+	alt_up_character_lcd_set_cursor_pos(char_lcd_dev, 0, 1);
+	alt_up_character_lcd_string(char_lcd_dev, second_row);
+	printf("HINTS:::     An----- a day keeps the doctor away\n");
+	return;
+}
+//second_game-SHARE------------------------------------------------------------------------------------
+void second_word() {
+	usleep(100000);
+	no_display_hex();
+	alt_up_character_lcd_dev*char_lcd_dev;
+	char_lcd_dev = alt_up_character_lcd_open_dev("/dev/character_lcd_0");
+	if (char_lcd_dev == NULL) {
+		printf("Error\n");
+	} else {
+//printf("opened_character_lcd\n");
+	}
+	alt_up_character_lcd_init(char_lcd_dev);
+	usleep(2000000);
+	alt_up_character_lcd_string(char_lcd_dev, " H    E       S ");
+	char second_row[] = "   A        R";
+	alt_up_character_lcd_set_cursor_pos(char_lcd_dev, 0, 1);
+	alt_up_character_lcd_string(char_lcd_dev, second_row);
+	printf("HINTS::: Its an act of kindness eg: I ----- my food\n");
+	letter[0][14] = 'S';
+	letter[0][1] = 'H';
+	letter[1][3] = 'A';
+	letter[1][12] = 'R';
+	letter[0][6] = 'E';
+
+	return;
+
+}
+
+//winner_hex_display-------------------------------------------------------------------------------------
+void winner_game() {
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, winner[0]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, winner[1]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, winner[2]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, winner[3]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_3_BASE, winner[4]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_2_BASE, winner[5]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_1_BASE, winner[6]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_0_BASE, nodisp[0]);
+	usleep(100000);
+
+	printf("Congratulation\n");
+	if (lset == 0) {
+		lset = 1;
+		second_word();
+		unsigned char toprint[] = "APPLE_SCORE=5\nSHARE_SCORE=0\n";
+		sd_card(toprint);
+		v = 0;
+	} else {
+		lset = 0;
+		First_word();
+		unsigned char toprint[] = "SHARE_SCORE=5\nAPPLE_SCORE=0\n";
+		sd_card(toprint);
+		v = 0;
+	}
+	no_display_hex();
+
+}
+
+//loser_hex_display--------------------------------------------------------------------------------------
+void loser_game() {
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, loser[0]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, loser[1]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, loser[2]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, loser[3]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_3_BASE, loser[4]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_2_BASE, nodisp[0]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_1_BASE, nodisp[0]);
+	IOWR_ALTERA_AVALON_PIO_DATA(HEX_0_BASE, nodisp[0]);
+	usleep(100000);
+	no_display_hex();
+	printf("Oh you loser!!\n");
+
+	if (lset == 0) {
+		lset = 1;
+		second_word();
+		sd_card("APPLE_SCORE=0");
+		v = 0;
+	} else {
+		lset = 0;
+		First_word();
+		sd_card("SHARE_SCORE=0");
+		v = 0;
+	}
+
+}
+//sd-card----------------------------------------------------------------------------------------
+void sd_card(char byte_to_write[]) {
+	alt_up_sd_card_dev*device_refernce = NULL;
+//Initializing variables---------------------------------------------------------------------------
+	int connected = 0;
+	bool Written = false;
+	bool isOpen = true; // signfiy if the file name was already created
+	short int data; // the read memory of the file
+	int index = 0;
+	int length = sizeof(byte_to_write) / sizeof(*byte_to_write);
+//sd card open-------------------------------------------------------------------------------------------
+
+	device_refernce = alt_up_sd_card_open_dev(
+			"/dev/Altera_UP_SD_Card_Avalon_Interface_0");
+	if (device_refernce != NULL) {
+// check sd card present---------------------------------------------------------------------------------
+		if ((connected == 0) && (alt_up_sd_card_is_Present())) {
+			printf("CARD CONNECTED\n");
+// check fat16-------------------------------------------------------------------------------------------
+			if (alt_up_sd_card_is_FAT16()) {
+				printf("FAT16 file system detected.\n");
+// check file directory file exists ---------------------------------------------------------------------
+				checking = alt_up_sd_card_find_first(
+						"/dev/Altera_UP_SD_Card_Avalon_Interface_0", filename);
+				if (checking == 0) { // 0 means - file found
+					isOpen = false;
+				} else {
+
+					isOpen = true;
+				}
+
+//open file------------------------------------------------------------------------------------------------------
+
+				file_checker = alt_up_sd_card_fopen(filename, isOpen);
+				printf("the result %i open or not\n", isOpen);
+//check if file opened or not------------------------------------------------------------------------------------------------------
+				if (file_checker < 0) {
+					printf("uh oh error %i\n", file_checker); //-1,-2
+				} else {
+					printf("file is open %i\n", file_checker);
+
+					printf("length = %i\n", length);
+// write into the file-----------------------------------------------------------------------------------
+					if (Written == 0) {
+						while (index < 13) {
+							Written = alt_up_sd_card_write(file_checker,
+									byte_to_write[index]);
+							index += 1;
+						}
+						printf("write function is working %i.\n", Written);
+// close file-------------------------------------------------------------------------------------------
+						alt_up_sd_card_fclose(file_checker);
+						printf("%s\n", byte_to_write);
+
+					}
+				}
+
+			}
+// not fat 16-------------------------------------------------------------------------------------------
+			else {
+				printf("Unknown file in system\n");
+			}
+			connected = 1;
+// sd card not found-------------------------------------------------------------------------------------
+		} else if ((connected == 1) && (alt_up_sd_card_is_Present() == false)) {
+			printf("Card disconnected.\n");
+			connected = 0;
+		}
+// read what is in file---------------------------------------------------------------------------------
+		if (Written == true) {
+			Written = false;
+			file_checker = alt_up_sd_card_fopen(filename, false);
+			data = alt_up_sd_card_read(file_checker);
+			printf("data in here is ");
+			while (data >= 0) {
+				printf("%c", data);
+				data = alt_up_sd_card_read(file_checker);
+			}
+			printf("\n");
+			alt_up_sd_card_fclose(file_checker);
+
+		}
+	}
+
+	return;
+
+}
+//GAME 2 FUNCTIONS-------------------------------------------------------------------------------------------------------
+
+void LCD() {
+	BLANK_HEX();
+printf(" Press S to start the game again or R to clear and play again \n");
+alt_up_character_lcd_dev* char_lcd_dev;
+char_lcd_dev = alt_up_character_lcd_open_dev("/dev/character_lcd_0");
+if (char_lcd_dev == NULL) {
+printf("Error\n");
+} else {
+printf(" Check what is written on LCD or HEX display\n");
+}
+alt_up_character_lcd_init(char_lcd_dev);
+alt_up_character_lcd_string(char_lcd_dev, "   LET'S PLAY   ");
+char second_row[] = " X AND O GAME!  ";
+alt_up_character_lcd_set_cursor_pos(char_lcd_dev, 0, 1);
+alt_up_character_lcd_string(char_lcd_dev, second_row);
+}
+
+void GET_READY() {
+	BLANK_HEX();
+printf(" BE ready to play again!\n");
+alt_up_character_lcd_dev* char_lcd_dev;
+char_lcd_dev = alt_up_character_lcd_open_dev("/dev/character_lcd_0");
+if (char_lcd_dev == NULL) {
+printf("Error\n");
+} else {
+}
+alt_up_character_lcd_init(char_lcd_dev);
+alt_up_character_lcd_string(char_lcd_dev, "    BE READY    ");
+char second_row[] = " TO PLAY AGAIN! ";
+alt_up_character_lcd_set_cursor_pos(char_lcd_dev, 0, 1);
+alt_up_character_lcd_string(char_lcd_dev, second_row);
+
+}
+
+void BLANK_HEX() {
+int BLANK[1] = { 0b1111111 };
+IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);
+IOWR_ALTERA_AVALON_PIO_DATA(HEX_3_BASE, BLANK[0]);
+IOWR_ALTERA_AVALON_PIO_DATA(HEX_2_BASE, BLANK[0]);
+IOWR_ALTERA_AVALON_PIO_DATA(HEX_1_BASE, BLANK[0]);
+IOWR_ALTERA_AVALON_PIO_DATA(HEX_0_BASE, BLANK[0]);
+return;
+}
+
+void STOP_isr(void) {
+	int STOP[4] = {0b0010010,0b0000111,0b1000000,0b0001100}; //STOP
+    int BLANK[1] = { 0b1111111 };
+    IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, STOP[0]);
+    IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, STOP[1]);
+    IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, STOP[2]);
+    IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, STOP[3]);
+    IOWR_ALTERA_AVALON_PIO_DATA(HEX_3_BASE, BLANK[0]);
+    IOWR_ALTERA_AVALON_PIO_DATA(HEX_2_BASE, BLANK[0]);
+    IOWR_ALTERA_AVALON_PIO_DATA(HEX_1_BASE, BLANK[0]);
+    IOWR_ALTERA_AVALON_PIO_DATA(HEX_0_BASE, BLANK[0]);
+    return;
+}
+
+void STOP_THE_GAME() {
+printf(" You Pressed S to start your game");
+alt_up_character_lcd_dev* char_lcd_dev;
+char_lcd_dev = alt_up_character_lcd_open_dev("/dev/character_lcd_0");
+if (char_lcd_dev == NULL) {
+printf("Error\n");
+} else {
+printf(" Then check LCD display or HEX display\n");
+}
+alt_up_character_lcd_init(char_lcd_dev);
+alt_up_character_lcd_string(char_lcd_dev, "    THE GAME    ");
+char second_row[] = "  IS STOPPED!  ";
+alt_up_character_lcd_set_cursor_pos(char_lcd_dev, 0, 1);
+alt_up_character_lcd_string(char_lcd_dev, second_row);
+}
+
+
+
+
+
+
+
+
+//-------------------------------------------------------------------------------------------------------
+
+int main() {
+//int i,j=0;
+	while(1){
+	if (selectGame == 0){
+	printf("Welcome to Nios Games display\n");
+	pio_keys();
+	alt_up_character_lcd_dev*char_lcd_dev;
+	char_lcd_dev = alt_up_character_lcd_open_dev("/dev/character_lcd_0");
+//alt_up_character_lcd_init(char_lcd_dev);
+
+	printf("I am back to main loop\n");
+	alt_up_character_lcd_cursor_blink_on(char_lcd_dev);
+
+	while (selectGame == 0) {
+//initialized keys---------------------------------------------------------------------------------------
+		int key0 = IORD(KEY0_BASE, 0); //right
+		int key1 = IORD(KEY1_BASE, 0); //left
+		int key2 = IORD(KEY2_BASE, 0); //up and down
+		int sw = IORD(SW0_BASE, 0); //eat word
+//move right---------------------------------------------------------------------------------------------
+		if (s == 0 && key0 == 0) {
+			printf("cursor moves right \n");
+			alt_up_character_lcd_set_cursor_pos(char_lcd_dev, xpos, ypos);
+			usleep(1000000);
+			alt_up_character_lcd_shift_cursor(char_lcd_dev, 1);
+			if (xpos == 15) {
+				printf("right cursor reset\n");
+				xpos = 0;
+			} else {
+				printf("the value of r %d\n", xpos);
+				xpos = xpos + 1;
+			}
+		}
+//move left----------------------------------------------------------------------------------
+
+		if (s == 0 && key1 == 0 && xpos != 16) {
+			printf("cursor moves left \n");
+			alt_up_character_lcd_set_cursor_pos(char_lcd_dev, xpos, ypos);
+			usleep(1000000);
+			alt_up_character_lcd_shift_cursor(char_lcd_dev, 1);
+			if (xpos == 0) {
+				printf("left cursor reset\n");
+				xpos = 15;
+			} else {
+				printf("the value of l %d", xpos);
+				xpos = xpos - 1;
+			}
+		}
+// move up down-----------------------------------------------------------------------------------
+		if (s == 0 && key2 == 0) {
+			if (ypos == 0) {
+				ypos = 1;
+				alt_up_character_lcd_set_cursor_pos(char_lcd_dev, xpos, ypos); // goes up
+				printf("Key moves down\n");
+				usleep(1000000);
+			} else if (ypos == 1 && key2 == 0) {
+				ypos = 0;
+				usleep(1000000);
+				alt_up_character_lcd_set_cursor_pos(char_lcd_dev, xpos, ypos);
+				printf("Key moves up\n");
+			}
+
+		}
+//destroy letters--------------------------------------------------------------------------
+		if (sw == 1 || enter == 1) {
+			if (letter[ypos][xpos] == correctX[lset][v]) {
+				printf("I am in the letter loop\n");
+				v = v + 1;
+				letter[ypos][xpos] = '0';
+				usleep(1000000);
+				alt_up_character_lcd_erase_pos(char_lcd_dev, xpos, ypos);
+				printf("I am gonna eat it \n");
+				printf("letter[%d][%d] = %c\n", ypos, xpos, letter[ypos][xpos]);
+				while (sw == 1) {
+//deadloop
+					sw = IORD(SW0_BASE, 0);
+				}
+				if (v == 5) {
+					winner_game();
+// another game calling;
+
+				}
+			}
+
+			else {
+
+				v = 0;
+				printf("letter[%d][%d] = %c\n", ypos, xpos, letter[ypos][xpos]);
+				printf("I am didn't digest food\n");
+				loser_game();
+				usleep(100000);
+
+			}
+			enter = 0;
+
+		}
+		alt_up_character_lcd_set_cursor_pos(char_lcd_dev, xpos, ypos);
+		usleep(10000);
+	}
+	}
+//GAME 2---------------------------------------------------------------------------------------
+
+
+
+		if(selectGame == 1){
+	    int BLANK[1] = { 0b1111111 };
+	    IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+	    IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+	    IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+	    IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);
+	    IOWR_ALTERA_AVALON_PIO_DATA(HEX_3_BASE, BLANK[0]);
+	    IOWR_ALTERA_AVALON_PIO_DATA(HEX_2_BASE, BLANK[0]);
+	    IOWR_ALTERA_AVALON_PIO_DATA(HEX_1_BASE, BLANK[0]);
+	    IOWR_ALTERA_AVALON_PIO_DATA(HEX_0_BASE, BLANK[0]);
+
+	    pio_keys(); // calling keys
+	    printf(" press S to start the game \n press R to clear and play again \n press P to STOP the game \n \n");
+	    /* Event loop never exits. */
+	    while (selectGame == 1) {
+
+	       int sw0 = IORD(SW0_BASE,0);
+	       int sw1 = IORD(SW1_BASE,0);
+	       int sw2 = IORD(SW2_BASE,0);
+	       int sw3 = IORD(SW3_BASE,0);
+	       int sw4 = IORD(SW4_BASE,0);
+	       int sw5 = IORD(SW5_BASE,0);
+	       int sw6 = IORD(SW6_BASE,0);
+	       int sw7 = IORD(SW7_BASE,0);
+	       int sw8 = IORD(SW8_BASE,0);
+	       int sw9 = IORD(SW9_BASE,0);
+	       int sw10 = IORD(SW10_BASE,0);
+	       int sw11 = IORD(SW11_BASE,0);
+	       int sw12 = IORD(SW12_BASE,0);
+	       int sw13 = IORD(SW13_BASE,0);
+	       int sw14 = IORD(SW14_BASE,0);
+	       int sw15 = IORD(SW15_BASE,0);
+	       int sw16 = IORD(SW16_BASE,0);
+	       int sw17 = IORD(SW17_BASE,0);
+
+	       int BLANK[1] = { 0b1111111 };
+
+	//Player A switches ------------------------------------------
+	    if ( sw0 == 1 ){
+	    IOWR_ALTERA_AVALON_PIO_DATA (HEX_0_BASE,HEX0[0]);}
+	    else if (sw0 == 0){
+	    IOWR_ALTERA_AVALON_PIO_DATA(HEX_0_BASE, BLANK[0]); }
+
+	    if ( sw1 == 1 ){
+	  	IOWR_ALTERA_AVALON_PIO_DATA (HEX_0_BASE,HEX0[1]);}
+	    else if (sw1 == 0){
+	    IOWR_ALTERA_AVALON_PIO_DATA(HEX_0_BASE, BLANK[0]);}
+
+		if ( sw2 == 1 ){
+		IOWR_ALTERA_AVALON_PIO_DATA (HEX_0_BASE,HEX0[2]);}
+		else if (sw2 == 0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_0_BASE, BLANK[0]);}
+
+		if ( sw3 == 1 ){
+		IOWR_ALTERA_AVALON_PIO_DATA (HEX_1_BASE,HEX1[0]);}
+		else if (sw3 == 0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_1_BASE, BLANK[0]);}
+
+		if ( sw4 == 1 ){
+		IOWR_ALTERA_AVALON_PIO_DATA (HEX_1_BASE,HEX1[1]);}
+		else if (sw4 == 0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_1_BASE, BLANK[0]);}
+
+		if ( sw5 == 1 ){
+		IOWR_ALTERA_AVALON_PIO_DATA (HEX_1_BASE,HEX1[2]);}
+		else if (sw5 == 0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_1_BASE, BLANK[0]);}
+
+		if ( sw6 == 1 ){
+		IOWR_ALTERA_AVALON_PIO_DATA (HEX_2_BASE,HEX1[0]);}
+		else if (sw6 == 0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_2_BASE, BLANK[0]);}
+
+		if ( sw7 == 1 ){
+		IOWR_ALTERA_AVALON_PIO_DATA (HEX_2_BASE,HEX1[1]);}
+		else if (sw7 == 0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_2_BASE, BLANK[0]);}
+
+		if ( sw8 == 1 ){
+		IOWR_ALTERA_AVALON_PIO_DATA (HEX_2_BASE,HEX1[2]);}
+		else if (sw8 == 0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_2_BASE, BLANK[0]);}
+
+	//Player A switches ------------------------------------------
+		    if ( sw9 == 1 ){
+		    IOWR_ALTERA_AVALON_PIO_DATA (HEX_0_BASE,HEX0[0]);}
+		    else if (sw9 == 0){
+		    IOWR_ALTERA_AVALON_PIO_DATA(HEX_0_BASE, BLANK[0]);}
+
+		    if ( sw10 == 1 ){
+		  	IOWR_ALTERA_AVALON_PIO_DATA (HEX_0_BASE,HEX0[1]);}
+		    else if (sw10 == 0){
+		    IOWR_ALTERA_AVALON_PIO_DATA(HEX_0_BASE, BLANK[0]);}
+
+			if ( sw11 == 1 ){
+			IOWR_ALTERA_AVALON_PIO_DATA (HEX_0_BASE,HEX0[2]);}
+			else if (sw11 == 0){
+			IOWR_ALTERA_AVALON_PIO_DATA(HEX_0_BASE, BLANK[0]);}
+
+			if ( sw12 == 1 ){
+			IOWR_ALTERA_AVALON_PIO_DATA (HEX_1_BASE,HEX1[0]);}
+			else if (sw12 == 0){
+			IOWR_ALTERA_AVALON_PIO_DATA(HEX_1_BASE, BLANK[0]);}
+
+			if ( sw13 == 1 ){
+			IOWR_ALTERA_AVALON_PIO_DATA (HEX_1_BASE,HEX1[1]);}
+			else if (sw13 == 0){
+			IOWR_ALTERA_AVALON_PIO_DATA(HEX_1_BASE, BLANK[0]);}
+
+			if ( sw14 == 1 ){
+			IOWR_ALTERA_AVALON_PIO_DATA (HEX_1_BASE,HEX1[2]);}
+			else if (sw14 == 0){
+			IOWR_ALTERA_AVALON_PIO_DATA(HEX_1_BASE, BLANK[0]);}
+
+			if ( sw15 == 1 ){
+			IOWR_ALTERA_AVALON_PIO_DATA (HEX_2_BASE,HEX1[0]);}
+			else if (sw15 == 0){
+			IOWR_ALTERA_AVALON_PIO_DATA(HEX_2_BASE, BLANK[0]);}
+
+			if ( sw16 == 1 ){
+			IOWR_ALTERA_AVALON_PIO_DATA (HEX_2_BASE,HEX1[1]);}
+			else if (sw16 == 0){
+			IOWR_ALTERA_AVALON_PIO_DATA(HEX_2_BASE, BLANK[0]);}
+
+			if ( sw17 == 1 ){
+			IOWR_ALTERA_AVALON_PIO_DATA (HEX_2_BASE,HEX1[2]);}
+			else if (sw17 == 0){
+			IOWR_ALTERA_AVALON_PIO_DATA(HEX_2_BASE, BLANK[0]);}
+
+	//Player A ----------------------------------------------------------------------------------------------
+	if (sw0 == 1 && sw4 == 1 && sw8 ==1){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, PA_DOIT[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, PA_DOIT[1]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw0 == 0 && sw4 == 1 && sw8 ==1 || sw0 == 1 && sw4 == 0 && sw8 ==1 || sw0 == 1 && sw4 == 1 && sw8 ==0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw1 == 1 && sw4 == 1 && sw7 ==1){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, PA_DOIT[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, PA_DOIT[1]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw1 == 0 && sw4 == 1 && sw7 ==1 || sw1 == 1 && sw4 == 0 && sw7 ==1 || sw1 == 1 && sw4 == 1 && sw7 ==0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw2 == 1 && sw4 == 1 && sw6 ==1){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, PA_DOIT[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, PA_DOIT[1]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw2 == 0 && sw4 == 1 && sw6 ==1 || sw2 == 1 && sw4 == 0 && sw6 ==1 || sw2 == 1 && sw4 == 1 && sw6 ==0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw0 == 1 && sw3 == 1 && sw6 ==1){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, PA_DOIT[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, PA_DOIT[1]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw0 == 0 && sw3 == 1 && sw6 ==1 || sw0 == 1 && sw3 == 0 && sw6 ==1 || sw0 == 1 && sw3 == 1 && sw6 ==0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw2 == 1 && sw5 == 1 && sw8 ==1){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, PA_DOIT[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, PA_DOIT[1]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw2 == 0 && sw5 == 1 && sw8 ==1 || sw2 == 1 && sw5 == 0 && sw8 ==1 || sw2 == 1 && sw5 == 1 && sw8 ==0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw6 == 1 && sw7 == 1 && sw8 ==1){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, PA_DOIT[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, PA_DOIT[1]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw6 == 0 && sw7 == 1 && sw8 ==1 || sw6 == 1 && sw7 == 0 && sw8 ==1 || sw6 == 1 && sw7 == 1 && sw8 ==0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw3 == 1 && sw4 == 1 && sw5 ==1){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, PA_DOIT[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, PA_DOIT[1]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw3 == 0 && sw4 == 1 && sw5 ==1 || sw3 == 1 && sw4 == 0 && sw5 ==1 || sw3 == 1 && sw4 == 1 && sw5 ==0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw0 == 1 && sw1 == 1 && sw2 ==1){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, PA_DOIT[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, PA_DOIT[1]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw0 == 0 && sw1 == 1 && sw2 ==1 || sw0 == 1 && sw1 == 0 && sw2 ==1 || sw0 == 1 && sw1 == 1 && sw2 ==0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	/*===========================================================================================*/
+	//Player B
+	else if (sw9 == 1 && sw13 == 1 && sw17 ==1){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, PB_DOIT[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, PB_DOIT[1]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);}
+
+	else if (sw9 == 0 && sw13 == 1 && sw17 ==1 || sw9 == 1 && sw13 == 0 && sw17 ==1 || sw9 == 1 && sw13 == 1 && sw17 ==0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw10 == 1 && sw13 == 1 && sw16 ==1){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, PB_DOIT[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, PB_DOIT[1]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);}
+
+	else if (sw10 == 0 && sw13 == 1 && sw16 ==1 || sw10 == 1 && sw13 == 0 && sw16 ==1 || sw10 == 1 && sw13 == 1 && sw16 ==0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw11 == 1 && sw13 == 1 && sw15 ==1){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, PB_DOIT[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, PB_DOIT[1]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);}
+
+	else if (sw11 == 0 && sw13 == 1 && sw15 ==1 || sw11 == 1 && sw13 == 0 && sw15 ==1 || sw11 == 1 && sw13 == 1 && sw15 ==0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw9 == 1 && sw12 == 1 && sw15 ==1){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, PB_DOIT[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, PB_DOIT[1]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);}
+
+	else if (sw9 == 0 && sw12 == 1 && sw15 ==1 || sw9 == 1 && sw12 == 0 && sw15 ==1 || sw9 == 1 && sw12 == 1 && sw15 ==0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw11 == 1 && sw14 == 1 && sw17 ==1){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, PB_DOIT[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, PB_DOIT[1]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);}
+
+	else if (sw11 == 0 && sw14 == 1 && sw17 ==1 || sw11 == 1 && sw14 == 0 && sw17 ==1 || sw11 == 1 && sw14 == 1 && sw17 ==0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw15 == 1 && sw16 == 1 && sw17 ==1){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, PB_DOIT[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, PB_DOIT[1]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);}
+
+	else if (sw15 == 0 && sw16 == 1 && sw17 ==1 || sw15 == 1 && sw16 == 0 && sw17 ==1 || sw15 == 1 && sw16 == 1 && sw17 ==0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw12 == 1 && sw13 == 1 && sw14 ==1){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, PB_DOIT[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, PB_DOIT[1]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	else if (sw12 == 0 && sw13 == 1 && sw14 ==1 || sw12 == 1 && sw13 == 0 && sw14 ==1 || sw12 == 1 && sw13 == 1 && sw14 ==0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+	// Winner--------------------------------------------------------------------------------------------
+	if (sw9 == 1 && sw10 == 1 && sw11 ==1){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, PB_DOIT[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, PB_DOIT[1]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+	//---------------------------------------------------------------------------------------------------------
+	if (sw9 == 0 && sw10 == 1 && sw11 ==1 || sw9 == 1 && sw10 == 0 && sw11 ==1 || sw9 == 1 && sw10 == 1 && sw11 ==0){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, BLANK[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, BLANK[0]);}
+
+	if (sw0 == 1 && sw1 == 1 && sw2 == 1 && sw3 == 1 && sw4 == 1 && sw5 == 1 && sw6 == 1 && sw7 == 1 && sw8 == 1 && sw9 == 1 && sw10 == 1 && sw11 == 1 && sw12 == 1 && sw13 == 1 && sw14 == 1 && sw15 == 1 && sw16 == 1 && sw17 == 1 ){
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_7_BASE, OOPS[0]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_6_BASE, OOPS[1]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_5_BASE, OOPS[2]);
+		IOWR_ALTERA_AVALON_PIO_DATA(HEX_4_BASE, OOPS[3]);
+	}
+
+	    }
+		}
+	}
+//------------------------------------------------------------------------------------------
+//------------------------------------------------------------------------------------------
+
+
+
+	return 0;
+}
+//setting up timer---------------------------------------------------------------------------
+void timer_once(int period) {
+	IOWR(HIGH_RES_TIMER_BASE, 1, 0b1000);
+	int periodlow;
+	int periodhigh;
+	periodlow = period;
+	IOWR(HIGH_RES_TIMER_BASE, 2, periodlow);
+	periodhigh = period >> 16;
+	IOWR(HIGH_RES_TIMER_BASE, 3, periodhigh);
+//printf("timer_once is setup \n");
+}
+//start timer--------------------------------------------------------------------------------
+void start_timer() {
+	int mark;
+	IOWR(HIGH_RES_TIMER_BASE, 1, 0b0110);
+	do {
+		mark = IORD(HIGH_RES_TIMER_BASE,0) & 1;
+	} while (!mark);
+	IOWR(HIGH_RES_TIMER_BASE, 0, 0b01);
+//printf("start_timer was checked \n");
+}
+//---------------------------------------------------------------------------------------------
